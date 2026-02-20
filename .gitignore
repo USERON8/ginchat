@@ -1,0 +1,28 @@
+# Go编译产物
+bin/
+pkg/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# 测试覆盖率
+*.test
+*.out
+
+# IDE配置（.idea是你截图里的JetBrains配置，禁止上传）
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# 日志文件
+logs/
+*.log
+
+# 临时文件
+tmp/
+temp/
+.DS_Store

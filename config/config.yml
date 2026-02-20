@@ -1,0 +1,36 @@
+# 服务配置
+server:
+  port: 8080
+  mode: debug # debug/release/test
+
+# 日志配置
+log:
+  level: info # debug/info/warn/error
+  filename: ./logs/im.log
+  max_size: 100   # 单日志文件最大MB
+  max_backups: 10 # 保留旧日志文件数
+  max_age: 30     # 保留旧日志天数
+  compress: true  # 是否压缩旧日志
+
+# 数据库配置（MySQL和PostgreSQL二选一，注释掉不用的）
+database:
+ # PostgreSQL配置（如果用PG，把上面MySQL注释，解开下面）
+   type: postgres
+   host: 127.0.0.1
+   port: 5432
+   username: postgres
+   password: root
+   dbname: im_db
+   sslmode: disable
+  # 连接池配置（高并发IM必备）
+   max_idle_conns: 20
+   max_open_conns: 100
+   conn_max_lifetime: 3600 # 秒
+
+# Redis配置
+redis:
+  host: 127.0.0.1
+  port: 6379
+  password: "root" # 没有密码留空
+  db: 0
+  pool_size: 100 # 连接池大小
