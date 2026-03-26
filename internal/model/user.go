@@ -1,11 +1,11 @@
-package models
+package model
 
 import "gorm.io/gorm"
 
-type UserBasic struct {
+type User struct {
 	gorm.Model
-	Username      string
-	PassWord      string
+	Username      string `gorm:"uniqueIndex;not null"`
+	Password      string `gorm:"not null"`
 	Phone         string
 	Email         string
 	Identity      string
@@ -19,6 +19,6 @@ type UserBasic struct {
 	HeartbeatTime uint64
 }
 
-func (UserBasic) TableName() string {
-	return "user_basic"
+func (User) TableName() string {
+	return "user"
 }

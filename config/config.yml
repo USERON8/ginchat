@@ -12,13 +12,13 @@ log:
   max_age: 30     # 保留旧日志天数
   compress: true  # 是否压缩旧日志
 
-# 数据库配置（MySQL和PostgreSQL二选一，注释掉不用的）
+# 数据库配置
 database:
- # PostgreSQL配置（如果用PG，把上面MySQL注释，解开下面）
+ # PostgreSQL配置
    type: postgres
    host: 127.0.0.1
    port: 5432
-   username: postgres
+   username: root
    password: root
    dbname: im_db
    sslmode: disable
@@ -34,3 +34,6 @@ redis:
   password: "root" # 没有密码留空
   db: 0
   pool_size: 100 # 连接池大小
+jwt:
+  secret: "secret-key"
+  expire: 72  # 小时
