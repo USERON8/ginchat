@@ -1,0 +1,28 @@
+services:
+  postgres:
+    image: bitnami/postgresql:17.5.0-debian-12-r20
+    container_name: ginchat-postgres
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRESQL_USERNAME=root
+      - POSTGRESQL_PASSWORD=root
+      - POSTGRESQL_DATABASE=im_db
+    volumes:
+      - postgres_data:/bitnami/postgresql
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql  # 自动执行建表 SQL
+      - ./test.sql:/docker-entrypoint-initdb.d/02_test.sql   # 再插数据
+  redis:
+    image: redis:7.4.5-bookworm
+    container_name: ginchat-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    command: redis-server --requirepass root  # 设置密码
+    volumes:
+      - redis_data:/data
+
+volumes:
+  postgres_data:
+  redis_data:

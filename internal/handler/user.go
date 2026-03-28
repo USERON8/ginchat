@@ -23,27 +23,27 @@ type registerReq struct {
 func Register(c *gin.Context) {
 	var req registerReq
 	if err := c.ShouldBindJSON(&req); err != nil {
-		response.Fail(c, "参数错误: "+err.Error())
+		response.FailWithMsg(c, response.CodeParamError, err.Error())
 		return
 	}
 
 	// 检查用户名是否已存在
 	var exist model.User
 	if database.DB.Where("username = ?", req.Username).First(&exist).Error == nil {
-		response.Fail(c, "用户名已存在")
+		response.Fail(c, response.CodeUserExist)
 		return
 	}
 
 	// 密码哈希
 	hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
 	if err != nil {
-		response.Fail(c, "服务器错误")
+		response.Fail(c, response.CodeServerError)
 		return
 	}
 
 	user := model.User{Username: req.Username, Password: string(hash)}
 	if err := database.DB.Create(&user).Error; err != nil {
-		response.Fail(c, "注册失败")
+		response.Fail(c, response.CodeRegisterFail)
 		return
 	}
 
@@ -53,19 +53,19 @@ func Register(c *gin.Context) {
 func Login(c *gin.Context) {
 	var req registerReq
 	if err := c.ShouldBindJSON(&req); err != nil {
-		response.Fail(c, "参数错误")
+		response.FailWithMsg(c, response.CodeParamError, err.Error())
 		return
 	}
 
 	var user model.User
 	if err := database.DB.Where("username = ?", req.Username).First(&user).Error; err != nil {
-		response.Fail(c, "用户不存在")
+		response.Fail(c, response.CodeUserExist)
 		return
 	}
 
 	// 验证密码
 	if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(req.Password)); err != nil {
-		response.Fail(c, "密码错误")
+		response.Fail(c, response.CodePasswordError)
 		return
 	}
 
@@ -76,15 +76,30 @@ func Login(c *gin.Context) {
 		"login_time":   now,
 		"is_logged_in": true,
 	})
-	token, err := jwtpkg.Generate(user.ID)
+	accessToken, err := jwtpkg.GenerateAccessToken(user.ID)
 	if err != nil {
-		response.Fail(c, "生成token失败")
+		response.Fail(c, response.CodeServerError)
 		return
 	}
-	response.OK(c, gin.H{"token": token, "userID": user.ID})
 
+	refreshToken, err := jwtpkg.GenerateRefreshToken(user.ID)
+	if err != nil {
+		response.Fail(c, response.CodeServerError)
+		return
+	}
+
+	// refresh token 存 Redis
+	err = redis.SetRefreshToken(user.ID, refreshToken)
+	if err != nil {
+		return
+	}
+
+	response.OK(c, gin.H{
+		"accessToken":  accessToken,
+		"refreshToken": refreshToken,
+		"userID":       user.ID,
+	})
 }
-
 func Logout(c *gin.Context) {
 	userID := c.GetUint("userID")
 
@@ -96,7 +111,44 @@ func Logout(c *gin.Context) {
 			"log_out_time": now,
 		})
 
+	// 删 refresh token，让刷新失效
+	redis.DelRefreshToken(userID)
+
 	response.OK(c, nil)
+}
+
+// handler/user.go 新增
+func RefreshToken(c *gin.Context) {
+	var req struct {
+		RefreshToken string `json:"refreshToken" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Fail(c, response.CodeParamError)
+		return
+	}
+
+	// 解析 refresh token
+	claims, err := jwtpkg.Parse(req.RefreshToken)
+	if err != nil || claims.TokenType != "refresh" {
+		response.Fail(c, response.CodeTokenInvalid)
+		return
+	}
+
+	// 校验 Redis 里是否存在（退出登录后就没了）
+	stored, err := redis.GetRefreshToken(claims.UserID)
+	if err != nil || stored != req.RefreshToken {
+		response.Fail(c, response.CodeTokenInvalid)
+		return
+	}
+
+	// 生成新的 access token
+	newAccessToken, err := jwtpkg.GenerateAccessToken(claims.UserID)
+	if err != nil {
+		response.Fail(c, response.CodeServerError)
+		return
+	}
+
+	response.OK(c, gin.H{"accessToken": newAccessToken})
 }
 func GetUserInfo(c *gin.Context) {
 	userID := c.GetUint("userID")
@@ -121,7 +173,7 @@ func GetUserInfo(c *gin.Context) {
 	// 2. 缓存没有，查数据库
 	var user model.User
 	if err := database.DB.First(&user, userID).Error; err != nil {
-		response.Fail(c, "用户不存在")
+		response.Fail(c, response.CodeUserExist)
 		return
 	}
 
@@ -148,7 +200,7 @@ func UpdateUserInfo(c *gin.Context) {
 		Email string `json:"email"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		response.Fail(c, "参数错误")
+		response.FailWithMsg(c, response.CodeParamError, err.Error())
 		return
 	}
 
@@ -158,7 +210,7 @@ func UpdateUserInfo(c *gin.Context) {
 			"phone": req.Phone,
 			"email": req.Email,
 		}).Error; err != nil {
-		response.Fail(c, "更新失败")
+		response.Fail(c, response.CodeUpdateFail)
 		return
 	}
 
@@ -173,7 +225,7 @@ func UpdateUserInfo(c *gin.Context) {
 func SearchUser(c *gin.Context) {
 	username := c.Query("username") // /api/user/search?username=xxx
 	if username == "" {
-		response.Fail(c, "请输入用户名")
+		response.Fail(c, response.CodeServerError)
 		return
 	}
 
@@ -183,4 +235,57 @@ func SearchUser(c *gin.Context) {
 		Find(&users)
 
 	response.OK(c, users)
+}
+
+// handler/user.go 新增
+func ChangePassword(c *gin.Context) {
+	userID := c.GetUint("userID")
+
+	var req struct {
+		OldPassword string `json:"oldPassword" binding:"required"`
+		NewPassword string `json:"newPassword" binding:"required,min=6"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Fail(c, response.CodeParamError)
+		return
+	}
+
+	// 查当前用户
+	var user model.User
+	if err := database.DB.First(&user, userID).Error; err != nil {
+		response.Fail(c, response.CodeUserNotFound)
+		return
+	}
+
+	// 验证旧密码
+	if err := bcrypt.CompareHashAndPassword(
+		[]byte(user.Password), []byte(req.OldPassword),
+	); err != nil {
+		response.Fail(c, response.CodePasswordError)
+		return
+	}
+
+	// 新密码不能和旧密码一样
+	if req.OldPassword == req.NewPassword {
+		response.FailWithMsg(c, response.CodeParamError, "新密码不能与旧密码相同")
+		return
+	}
+
+	// 加密新密码
+	hash, err := bcrypt.GenerateFromPassword([]byte(req.NewPassword), bcrypt.DefaultCost)
+	if err != nil {
+		response.Fail(c, response.CodeServerError)
+		return
+	}
+
+	// 更新密码
+	database.DB.Model(&model.User{}).
+		Where("id = ?", userID).
+		Update("password", string(hash))
+
+	// 删缓存、删 refresh token（强制重新登录）
+	redis.DelUserInfo(userID)
+	redis.DelRefreshToken(userID)
+
+	response.OK(c, nil)
 }

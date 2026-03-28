@@ -1,7 +1,11 @@
 // internal/ws/manager.go
 package ws
 
-import "sync"
+import (
+	"ginchat/internal/model"
+	"ginchat/pkg/database"
+	"sync"
+)
 
 type Manager struct {
 	clients map[uint]*Client
@@ -33,4 +37,22 @@ func (m *Manager) Send(toUserID uint, msg []byte) {
 		c.Send <- msg
 	}
 	// 对方不在线，消息已经存 DB 了，没问题
+}
+func (m *Manager) SendGroup(groupID uint, senderID uint, msg []byte) {
+	// 查群成员
+	var members []model.GroupMember
+	database.DB.Where("group_id = ?", groupID).Find(&members)
+
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	for _, member := range members {
+		if member.UserID == senderID {
+			continue // 不发给自己
+		}
+		if client, ok := m.clients[member.UserID]; ok {
+			client.Send <- msg // 在线就推
+		}
+		// 不在线：消息已存 DB，查历史记录可以看到
+	}
 }

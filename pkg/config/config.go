@@ -15,26 +15,34 @@ type ServerConfig struct {
 }
 
 type DatabaseConfig struct {
-	Host     string
-	Port     int
-	User     string
-	Password string
-	DBName   string
+	Type            string
+	Host            string
+	Port            int
+	Username        string
+	Password        string
+	DBName          string
+	SSLMode         string
+	MaxIdleConns    int
+	MaxOpenConns    int
+	ConnMaxLifetime int
 }
 
+type RedisConfig struct {
+	Host     string
+	Port     int
+	Password string
+	DB       int
+	PoolSize int
+}
 type JWTConfig struct {
 	Secret string
 	Expire int
 }
 
-type RedisConfig struct {
-	Host string
-	Port int
-}
-
 var Cfg Config
 
 func Init() {
+
 	viper.SetConfigName("config")
 	viper.SetConfigType("yaml")
 	viper.AddConfigPath("./config")

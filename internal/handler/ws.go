@@ -3,6 +3,7 @@ package handler
 
 import (
 	"ginchat/internal/ws"
+	"ginchat/pkg/response"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -15,6 +16,10 @@ var upgrader = websocket.Upgrader{
 
 func WsHandler(c *gin.Context) {
 	userID := c.GetUint("userID")
+	if userID == 0 {
+		response.Fail(c, response.CodeUnauthorized)
+		return
+	}
 
 	conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {

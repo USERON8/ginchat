@@ -22,13 +22,20 @@ func StartWorkers(n int) {
 	for i := 0; i < n; i++ {
 		go func() {
 			for task := range msgQueue {
-				// 写数据库
-				database.DB.Create(&model.PrivateMessage{
-					FromID:  task.FromID,
-					ToID:    task.ToID,
-					Content: task.Content,
-					Type:    task.Type,
-				})
+				switch task.Type {
+				case "private":
+					database.DB.Create(&model.PrivateMessage{
+						FromID:  task.FromID,
+						ToID:    task.ToID,
+						Content: task.Content,
+					})
+				case "group":
+					database.DB.Create(&model.GroupMessage{
+						GroupID: task.ToID,
+						FromID:  task.FromID,
+						Content: task.Content,
+					})
+				}
 			}
 		}()
 	}

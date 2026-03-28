@@ -2,10 +2,12 @@ package ws
 
 import (
 	"encoding/json"
-	"ginchat/internal/model"
-	"ginchat/pkg/database"
+	"ginchat/pkg/logger"
+	"ginchat/pkg/redis"
+	"time"
 
 	"github.com/gorilla/websocket"
+	"go.uber.org/zap"
 )
 
 type Client struct {
@@ -14,10 +16,9 @@ type Client struct {
 	Send   chan []byte
 }
 
-// ReadPump ：一直读，收到消息就处理
 func (c *Client) ReadPump() {
-	// 函数退出时：关闭连接，从 Manager 移除
 	defer func() {
+		redis.SetOffline(c.UserID)
 		Mgr.Remove(c.UserID)
 		err := c.Conn.Close()
 		if err != nil {
@@ -25,71 +26,100 @@ func (c *Client) ReadPump() {
 		}
 	}()
 
+	redis.SetOnline(c.UserID)
+
+	err := c.Conn.SetReadDeadline(time.Now().Add(60 * time.Second))
+	if err != nil {
+		return
+	}
+	c.Conn.SetPongHandler(func(string) error {
+		err := c.Conn.SetReadDeadline(time.Now().Add(60 * time.Second))
+		if err != nil {
+			return err
+		}
+		return nil
+	})
+
 	for {
-		// 阻塞等待客户端发消息
 		_, data, err := c.Conn.ReadMessage()
 		if err != nil {
-			// 客户端断开了（关闭浏览器/网络断了）
 			break
 		}
-
-		// 解析消息
-		var msg Message
-		if err := json.Unmarshal(data, &msg); err != nil {
-			continue // 格式不对，跳过
-		}
-
-		// 处理消息
-		c.handleMessage(msg, data)
+		c.handleMessage(data) // ← 调这里
 	}
 }
 
-// WritePump ：一直等 channel，有消息就发出去
 func (c *Client) WritePump() {
-	defer func(Conn *websocket.Conn) {
-		err := Conn.Close()
+	ticker := time.NewTicker(30 * time.Second)
+	defer func() {
+		ticker.Stop()
+		err := c.Conn.Close()
 		if err != nil {
-
+			return
 		}
-	}(c.Conn)
+	}()
 
 	for {
 		select {
 		case msg, ok := <-c.Send:
 			if !ok {
-				// channel 被关闭了，说明用户下线
 				err := c.Conn.WriteMessage(websocket.CloseMessage, []byte{})
 				if err != nil {
 					return
 				}
 				return
 			}
-			// 发给客户端
 			err := c.Conn.WriteMessage(websocket.TextMessage, msg)
 			if err != nil {
+				return
+			}
+
+		case <-ticker.C:
+			if err := c.Conn.WriteMessage(websocket.PingMessage, nil); err != nil {
 				return
 			}
 		}
 	}
 }
 
-// handleMessage：消息处理逻辑
-func (c *Client) handleMessage(msg Message, raw []byte) {
+// handleMessage 在同一个文件最底部
+func (c *Client) handleMessage(data []byte) {
+	var msg Message
+	if err := json.Unmarshal(data, &msg); err != nil {
+		return
+	}
+
+	// 去重
+	if msg.MsgID != "" && redis.IsDuplicate(msg.MsgID) {
+		return
+	}
+	logger.Info("收到消息",
+		zap.Uint("fromID", c.UserID),
+		zap.Uint("toID", msg.ToID),
+		zap.String("content", msg.Content),
+	)
+	msg.FromID = c.UserID
 	switch msg.Type {
 	case "private":
-		// 1. 存数据库
-		record := model.PrivateMessage{
+		// 异步写DB
+		SubmitMsg(MsgTask{
 			FromID:  c.UserID,
 			ToID:    msg.ToID,
 			Content: msg.Content,
-		}
-		database.DB.Create(&record)
-
-		// 2. 找到对方，发过去
-		Mgr.Send(msg.ToID, raw)
+		})
+		newData, _ := json.Marshal(msg)
+		Mgr.Send(msg.ToID, newData)
+	case "group":
+		SubmitMsg(MsgTask{
+			Type:    "group",
+			FromID:  c.UserID,
+			ToID:    msg.ToID, // 群ID
+			Content: msg.Content,
+		})
+		Mgr.SendGroup(msg.ToID, c.UserID, data)
+		// 立刻转发
 
 	case "ping":
-		// 心跳，回一个 pong
 		pong, _ := json.Marshal(Message{Type: "pong"})
 		c.Send <- pong
 	}

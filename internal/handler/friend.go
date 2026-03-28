@@ -5,43 +5,47 @@ import (
 	"ginchat/internal/model"
 	"ginchat/pkg/database"
 	"ginchat/pkg/response"
+	"strconv"
 
 	"github.com/gin-gonic/gin"
 )
 
-// 发送好友申请
 func ApplyFriend(c *gin.Context) {
 	userID := c.GetUint("userID")
-	friendID := c.GetUint("friendID") // 从路由参数取，需要用 param
 
-	// 不能加自己
+	// 从路由参数取
+	friendIDStr := c.Param("id")
+	friendIDInt, err := strconv.Atoi(friendIDStr)
+	if err != nil {
+		response.Fail(c, response.CodeParamError)
+		return
+	}
+	friendID := uint(friendIDInt)
+
 	if userID == friendID {
-		response.Fail(c, "不能添加自己")
+		response.Fail(c, response.CodeCannotAddSelf)
 		return
 	}
 
-	// 检查对方是否存在
 	var target model.User
 	if err := database.DB.First(&target, friendID).Error; err != nil {
-		response.Fail(c, "用户不存在")
+		response.Fail(c, response.CodeUserNotFound)
 		return
 	}
 
-	// 检查是否已经是好友或已申请
 	var exist model.Friendship
 	if database.DB.Where(
 		"user_id = ? AND friend_id = ?", userID, friendID,
 	).First(&exist).Error == nil {
-		response.Fail(c, "已申请或已是好友")
+		response.Fail(c, response.CodeFriendExist)
 		return
 	}
 
-	friendship := model.Friendship{
+	database.DB.Create(&model.Friendship{
 		UserID:   userID,
 		FriendID: friendID,
 		Status:   "pending",
-	}
-	database.DB.Create(&friendship)
+	})
 
 	response.OK(c, nil)
 }
@@ -55,19 +59,19 @@ func HandleApply(c *gin.Context) {
 		Action  string `json:"action" binding:"required"` // accepted / rejected
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		response.Fail(c, "参数错误")
+		response.Fail(c, response.CodeParamError)
 		return
 	}
 
 	var friendship model.Friendship
 	if err := database.DB.First(&friendship, req.ApplyID).Error; err != nil {
-		response.Fail(c, "申请不存在")
+		response.Fail(c, response.CodeFriendNotFound)
 		return
 	}
 
 	// 只有被申请人才能操作
 	if friendship.FriendID != userID {
-		response.Fail(c, "无权操作")
+		response.Fail(c, response.CodeFriendNoPermission)
 		return
 	}
 
@@ -107,7 +111,11 @@ func GetFriendList(c *gin.Context) {
 	var friendships []model.Friendship
 	database.DB.Where("user_id = ? AND status = ?", userID, "accepted").
 		Find(&friendships)
-
+	// 没有好友直接返回空数组
+	if len(friendships) == 0 {
+		response.OK(c, []model.User{})
+		return
+	}
 	// 拿到所有好友 ID
 	var friendIDs []uint
 	for _, f := range friendships {
@@ -131,7 +139,7 @@ func DeleteFriend(c *gin.Context) {
 		FriendID uint `json:"friendId" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		response.Fail(c, "参数错误")
+		response.Fail(c, response.CodeParamError)
 		return
 	}
 

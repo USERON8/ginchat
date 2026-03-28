@@ -2,8 +2,9 @@
 package ws
 
 type Message struct {
-	Type    string `json:"type"` // private/ping/pong
+	MsgID   string `json:"msgId"` // 客户端生成，用于去重
+	Type    string `json:"type"`  // private/ping/pong
 	ToID    uint   `json:"toId"`
 	Content string `json:"content"`
-	FromID  uint   `json:"fromId"` // 服务端转发时填上
+	FromID  uint   `json:"fromId"` // 服务端填
 }

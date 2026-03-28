@@ -10,17 +10,27 @@ import (
 )
 
 type Claims struct {
-	UserID uint
+	UserID    uint
+	TokenType string // access / refresh
 	jwt.RegisteredClaims
 }
 
-func Generate(userID uint) (string, error) {
+// 生成 access token（2小时）
+func GenerateAccessToken(userID uint) (string, error) {
+	return generate(userID, "access", 2*time.Hour)
+}
+
+// 生成 refresh token（7天）
+func GenerateRefreshToken(userID uint) (string, error) {
+	return generate(userID, "refresh", 7*24*time.Hour)
+}
+
+func generate(userID uint, tokenType string, duration time.Duration) (string, error) {
 	claims := Claims{
-		UserID: userID,
+		UserID:    userID,
+		TokenType: tokenType,
 		RegisteredClaims: jwt.RegisteredClaims{
-			ExpiresAt: jwt.NewNumericDate(
-				time.Now().Add(time.Duration(config.Cfg.JWT.Expire) * time.Hour),
-			),
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(duration)),
 		},
 	}
 	return jwt.NewWithClaims(jwt.SigningMethodHS256, claims).
